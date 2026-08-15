@@ -58,10 +58,18 @@ const showFestivalList = ref(false);
 const internationalFestivals = {
   '2-14': '情人节',
   '4-1': '愚人节',
+  '8-15': '日本投降日',
+  '9-3': '抗战胜利纪念日',
   '10-31': '万圣节',
   '11-11': '光棍节',
   '12-24': '平安夜',
   '12-25': '圣诞节',
+};
+
+// 日历格子中的节日缩写（格子空间有限用短名，详情面板显示完整名）
+const festivalShortNames = {
+  '日本投降日': '日本投降',
+  '抗战胜利纪念日': '抗战胜利',
 };
 
 // 节日简介数据
@@ -93,6 +101,9 @@ const festivalDescriptions = {
   '建军节': '中国人民解放军建军纪念日',
   '教师节': '尊师重教，感恩教师的节日',
   '国庆节': '中华人民共和国成立纪念日',
+  // 抗战纪念日
+  '日本投降日': '1945年8月15日，日本宣布接受《波茨坦公告》无条件投降',
+  '抗战胜利纪念日': '9月3日中国人民抗日战争胜利纪念日，铭记历史、缅怀先烈',
   // 国际节日
   '情人节': '西方传统情人节，表达爱意的浪漫日子',
   '愚人节': '西方民间节日，相互开玩笑的欢乐日',
@@ -579,7 +590,7 @@ const calendarDays = computed(() => {
     } else if (showSolarTerms.value && solarTermName) {
       displayFestival = solarTermName;
     } else if (showInternationalFestivals.value && internationalFestival) {
-      displayFestival = internationalFestival;
+      displayFestival = festivalShortNames[internationalFestival] || internationalFestival;
     }
     
     // lunarText 用于日历格子显示
