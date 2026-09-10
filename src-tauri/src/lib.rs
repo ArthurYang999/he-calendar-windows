@@ -31,6 +31,35 @@ fn reminders_enabled(conn: &Connection) -> bool {
     .unwrap_or(true)
 }
 
+fn set_reminders_enabled(conn: &Connection, enabled: bool) -> rusqlite::Result<usize> {
+  conn.execute(
+    "INSERT INTO settings (key, value) VALUES ('reminders_enabled', ?1)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    [if enabled { "true" } else { "false" }],
+  )
+}
+
+fn toggle_reminders_enabled(app: &AppHandle) -> bool {
+  let Some(path) = db_path(app) else {
+    return true;
+  };
+  let Ok(conn) = Connection::open(&path) else {
+    return true;
+  };
+  let next = !reminders_enabled(&conn);
+  let _ = set_reminders_enabled(&conn, next);
+  next
+}
+
+fn refresh_reminders_menu_label(item: &MenuItem<tauri::Wry>, enabled: bool) {
+  let label = if enabled {
+    "提醒：已开启"
+  } else {
+    "提醒：已关闭"
+  };
+  let _ = item.set_text(label);
+}
+
 fn scan_and_notify(app: &AppHandle) {
   let Some(path) = db_path(app) else {
     return;
@@ -164,16 +193,30 @@ INSERT OR IGNORE INTO settings (key, value) VALUES ('launch_at_login', 'false');
 
       let show_i = MenuItem::with_id(app, "show", "打开日历", true, None::<&str>)?;
       let today_i = MenuItem::with_id(app, "today", "今日待办", true, None::<&str>)?;
+      let reminders_i =
+        MenuItem::with_id(app, "reminders", "提醒：已开启", true, None::<&str>)?;
       let quit_i = MenuItem::with_id(app, "quit", "退出", true, None::<&str>)?;
-      let menu = Menu::with_items(app, &[&show_i, &today_i, &quit_i])?;
+      let menu = Menu::with_items(app, &[&show_i, &today_i, &reminders_i, &quit_i])?;
 
+      // Sync tray label with existing setting once DB exists.
+      if let Some(path) = db_path(app.handle()) {
+        if let Ok(conn) = Connection::open(path) {
+          refresh_reminders_menu_label(&reminders_i, reminders_enabled(&conn));
+        }
+      }
+
+      let reminders_menu_item = reminders_i.clone();
       let _tray = TrayIconBuilder::new()
         .icon(app.default_window_icon().unwrap().clone())
         .menu(&menu)
         .show_menu_on_left_click(false)
         .tooltip("合社日历")
-        .on_menu_event(|app, event| match event.id.as_ref() {
+        .on_menu_event(move |app, event| match event.id.as_ref() {
           "show" | "today" => show_main_window(app),
+          "reminders" => {
+            let enabled = toggle_reminders_enabled(app);
+            refresh_reminders_menu_label(&reminders_menu_item, enabled);
+          }
           "quit" => {
             app.exit(0);
           }
