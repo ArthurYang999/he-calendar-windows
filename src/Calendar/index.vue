@@ -6,6 +6,15 @@ import { ChevronLeft, ChevronRight, Palette, Settings, Github, ExternalLink, Use
 import { projectConfig } from '../config';
 import { searchLocations, fetchWeatherData, autoLocateAndFetch, LocationError, WeatherError } from '../services/weather-service.js'
 import { getTempColor } from '../services/weather-models.js'
+import TodoPanel from './TodoPanel.vue'
+import { monthSummary } from '../services/todo-service.js'
+import {
+  getRemindersEnabled,
+  setRemindersEnabled,
+  getLaunchAtLogin,
+  setLaunchAtLogin,
+  isTauri,
+} from '../services/settings-service.js'
 
 const props = defineProps(['enterAction']);
 
@@ -44,7 +53,11 @@ const showInternationalFestivals = ref(getStorageItem('calendar-show-internation
 const showSolarTerms = ref(getStorageItem('calendar-show-solar-terms', 'true') === 'true'); // 二十四节气
 const showWeather = ref(getStorageItem('calendar-show-weather', 'true') === 'true'); // 天气显示开关
 const isUtools = ref(!!window.utools); // 是否在 uTools 环境
+const isDesktop = ref(isTauri()); // Tauri Windows 桌面
 const showFestivalPanel = ref(false); // 节日配置面板展开状态
+const todoSummary = ref({}); // { 'YYYY-MM-DD': unfinishedCount }
+const remindersEnabled = ref(true);
+const launchAtLogin = ref(false);
 
 // 节日弹出卡片状态
 const showFestivalCard = ref(false);
@@ -596,6 +609,7 @@ const calendarDays = computed(() => {
     // lunarText 用于日历格子显示
     const lunarText = lunarDayName === '初一' ? lunarMonthName : lunarDayName;
     
+    const dateKey = date.format('YYYY-MM-DD');
     days.push({
       date,
       solarDay,
@@ -607,6 +621,7 @@ const calendarDays = computed(() => {
       displayFestival: displayFestival, // 日历格子显示的节日（按优先级）
       allFestivals: allFestivalsForDetail, // 所有节日（用于详情显示）
       holiday: legalHoliday ? { name: legalHoliday.getName(), isWork: legalHoliday.isWork() } : null,
+      todoCount: todoSummary.value[dateKey] || 0,
     });
   }
   return days;
@@ -1456,7 +1471,37 @@ watch([isDarkMode, activeThemeConfig], () => {
   applyTheme();
 }, { deep: true });
 
-onMounted(() => {
+async function refreshTodoSummary() {
+  try {
+    todoSummary.value = await monthSummary(
+      currentMonth.value.year(),
+      currentMonth.value.month() + 1
+    );
+  } catch (e) {
+    console.warn('加载待办摘要失败', e);
+  }
+}
+
+async function toggleRemindersEnabled() {
+  remindersEnabled.value = !remindersEnabled.value;
+  await setRemindersEnabled(remindersEnabled.value);
+}
+
+async function toggleLaunchAtLogin() {
+  launchAtLogin.value = !launchAtLogin.value;
+  try {
+    await setLaunchAtLogin(launchAtLogin.value);
+  } catch (e) {
+    launchAtLogin.value = !launchAtLogin.value;
+    console.warn('开机自启设置失败', e);
+  }
+}
+
+watch(currentMonth, () => {
+  refreshTodoSummary();
+});
+
+onMounted(async () => {
   const savedTheme = getStorageItem('calendar-theme', 'auto');
   currentTheme.value = savedTheme;
   
@@ -1480,6 +1525,10 @@ onMounted(() => {
     // 每30分钟刷新一次天气
     weatherTimer = setInterval(fetchWeather, 30 * 60 * 1000);
   }
+
+  refreshTodoSummary();
+  remindersEnabled.value = await getRemindersEnabled();
+  launchAtLogin.value = await getLaunchAtLogin();
 });
 
 onUnmounted(() => {
@@ -1812,6 +1861,27 @@ watch(activeThemeConfig, () => {
             </div>
             
             <div class="settings-separator"></div>
+
+            <div class="settings-section">
+              <div class="section-title">待办提醒</div>
+              <div class="setting-options">
+                <button
+                  class="option-btn"
+                  :class="{ active: remindersEnabled }"
+                  @click="toggleRemindersEnabled"
+                >{{ remindersEnabled ? '已开启' : '已关闭' }}</button>
+              </div>
+              <div v-if="isDesktop" class="section-title" style="margin-top: 10px;">开机自启</div>
+              <div v-if="isDesktop" class="setting-options">
+                <button
+                  class="option-btn"
+                  :class="{ active: launchAtLogin }"
+                  @click="toggleLaunchAtLogin"
+                >{{ launchAtLogin ? '已开启' : '已关闭' }}</button>
+              </div>
+            </div>
+            
+            <div class="settings-separator"></div>
             
             <div class="settings-section">
               <div class="section-title">
@@ -1869,6 +1939,9 @@ watch(activeThemeConfig, () => {
                 </div>
                 <div v-if="day.holiday" class="holiday-tag" :class="day.holiday.isWork ? 'work' : 'rest'">
                   {{ day.holiday.isWork ? '班' : '休' }}
+                </div>
+                <div v-if="day.todoCount" class="todo-dot" :title="`${day.todoCount} 项未完成待办`">
+                  <span v-if="day.todoCount > 1">{{ day.todoCount > 9 ? '9+' : day.todoCount }}</span>
                 </div>
               </div>
             </div>
@@ -1973,6 +2046,11 @@ watch(activeThemeConfig, () => {
             </transition>
           </div>
         </div>
+
+        <TodoPanel
+          :date="selectedDate.format('YYYY-MM-DD')"
+          @changed="refreshTodoSummary"
+        />
       </aside>
     </div>
 
@@ -2551,6 +2629,25 @@ watch(activeThemeConfig, () => {
   padding: 1px 3px;
   border-radius: 3px;
   line-height: 1;
+}
+
+.todo-dot {
+  position: absolute;
+  bottom: 5px;
+  left: 50%;
+  transform: translateX(-50%);
+  min-width: 8px;
+  height: 8px;
+  padding: 0 3px;
+  border-radius: 8px;
+  background: var(--accent-color);
+  color: #fff;
+  font-size: 0.55rem;
+  line-height: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 0 0 1px var(--panel-bg, #fff);
 }
 
 .holiday-tag.rest {

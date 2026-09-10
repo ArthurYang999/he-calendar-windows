@@ -39,3 +39,6 @@ output/playwright/
 skills-lock.json
 .slim
   
+# Local Rust toolchain / caches (project-local install)
+.tools/
+src-tauri/target/ 
