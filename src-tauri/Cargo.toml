@@ -5,14 +5,14 @@ description = "合社日历 - Windows 桌面版"
 authors = ["阿裕Addyu"]
 license = "MIT"
 edition = "2021"
-rust-version = "1.77.2"
+rust-version = "1.85.0"
 
 [lib]
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
-tauri-build = { version = "2.6.3" }
+tauri-build = { version = "2.6.3", features = [] }
 
 [dependencies]
 serde_json = "1.0"

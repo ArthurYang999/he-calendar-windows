@@ -1,3 +1,4 @@
+# Tauri 2 + current crates need edition2024-capable Cargo (Rust >= 1.85).
 [toolchain]
-channel = "1.85.0"
+channel = "stable"
 components = ["rustfmt", "clippy"]
