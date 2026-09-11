@@ -3,10 +3,11 @@
  * 参考 breezy-weather 项目 ChinaApi.kt 设计
  */
 
-// uTools Electron WebView 不限制 CORS，直接请求小米 API
-// Web 环境通过 /api/weather/ 代理（EdgeOne Edge Function 或 Vite dev proxy）
+// uTools Electron WebView / Tauri WebView 不限制 CORS，直接请求小米 API
+// 纯浏览器环境通过 /api/weather/ 代理（EdgeOne Edge Function 或 Vite dev proxy）
 const isUtoolsEnv = typeof window !== 'undefined' && !!window.utools
-const BASE_URL = isUtoolsEnv
+const isTauriEnv = typeof window !== 'undefined' && !!(window.__TAURI_INTERNALS__ || window.__TAURI__)
+const BASE_URL = (isUtoolsEnv || isTauriEnv)
   ? 'https://weatherapi.market.xiaomi.com/wtr-v3/'
   : '/api/weather/'
 const CHINA_APP_KEY = 'weather20151024'

@@ -1,12 +1,19 @@
 <script lang="ts" setup>
 import { onMounted, ref } from 'vue';
 import Calendar from './Calendar/index.vue'
+import { isTauri } from './services/settings-service.js'
 
 const route = ref('calendar')
 const enterAction = ref({})
 const isUtools = ref(false)
+const isDesktop = ref(false)
 
 onMounted(() => {
+  isDesktop.value = isTauri()
+  if (isDesktop.value) {
+    document.body.classList.add('is-desktop')
+  }
+
   if (window.utools) {
     isUtools.value = true
     document.body.classList.add('is-utools')
@@ -19,7 +26,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="app-container" :class="{ 'is-utools': isUtools }">
+  <div class="app-container" :class="{ 'is-utools': isUtools, 'is-desktop': isDesktop }">
     <Calendar :enterAction="enterAction"></Calendar>
   </div>
 </template>
@@ -31,9 +38,23 @@ onMounted(() => {
   overflow: hidden;
 }
 
-/* 响应式布局 - 大屏幕卡片化 */
+.app-container.is-desktop {
+  display: block;
+  padding: 0;
+}
+
+.app-container.is-desktop > * {
+  max-width: none;
+  max-height: none;
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+/* 响应式布局 - 大屏幕卡片化（仅非桌面 / 非 uTools） */
 @media (min-width: 1024px) {
-  .app-container:not(.is-utools) {
+  .app-container:not(.is-utools):not(.is-desktop) {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -41,7 +62,7 @@ onMounted(() => {
     box-sizing: border-box;
   }
   
-  .app-container:not(.is-utools) > * {
+  .app-container:not(.is-utools):not(.is-desktop) > * {
     max-width: 1200px;
     max-height: 800px;
     width: 100%;
@@ -54,7 +75,7 @@ onMounted(() => {
 
 /* 中等屏幕 */
 @media (min-width: 768px) and (max-width: 1023px) {
-  .app-container:not(.is-utools) {
+  .app-container:not(.is-utools):not(.is-desktop) {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -62,7 +83,7 @@ onMounted(() => {
     box-sizing: border-box;
   }
   
-  .app-container:not(.is-utools) > * {
+  .app-container:not(.is-utools):not(.is-desktop) > * {
     max-width: 95%;
     max-height: 95%;
     border-radius: 12px;
