@@ -1,6 +1,11 @@
 /**
- * 待办数据服务：Tauri 下走 SQLite，纯浏览器预览降级到 localStorage。
+ * 待办数据服务：
+ * WinUI WebView2 → 宿主桥 SQLite
+ * Tauri → plugin-sql
+ * 浏览器预览 → localStorage
  */
+
+import { bridgeInvoke, isWinUiShell } from './winui-bridge.js'
 
 const DB_URL = 'sqlite:he_calendar.db'
 const STORAGE_KEY = 'he-calendar-todos'
@@ -43,10 +48,10 @@ function mapRow(row) {
     date: row.date,
     title: row.title,
     done: !!row.done,
-    remindAt: row.remind_at ?? null,
+    remindAt: row.remindAt ?? row.remind_at ?? null,
     notified: !!row.notified,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
+    createdAt: row.createdAt ?? row.created_at,
+    updatedAt: row.updatedAt ?? row.updated_at,
   }
 }
 
@@ -73,6 +78,10 @@ function writeLocal(todos) {
 }
 
 export async function listByDate(date) {
+  if (isWinUiShell()) {
+    const rows = await bridgeInvoke('todos.list', { date })
+    return (rows || []).map(mapRow)
+  }
   const db = await getDb()
   if (!db) {
     return readLocal()
@@ -88,6 +97,9 @@ export async function listByDate(date) {
 
 export async function monthSummary(year, month) {
   const prefix = `${year}-${String(month).padStart(2, '0')}`
+  if (isWinUiShell()) {
+    return (await bridgeInvoke('todos.monthSummary', { prefix })) || {}
+  }
   const db = await getDb()
   if (!db) {
     const map = {}
@@ -113,6 +125,11 @@ export async function monthSummary(year, month) {
 
 export async function createTodo({ date, title, remindAt = null }) {
   const cleanTitle = normalizeTitle(title)
+  if (isWinUiShell()) {
+    const item = await bridgeInvoke('todos.create', { date, title: cleanTitle, remindAt })
+    return mapRow(item)
+  }
+
   const id = crypto.randomUUID()
   const ts = nowIso()
   const item = {
@@ -143,6 +160,16 @@ export async function createTodo({ date, title, remindAt = null }) {
 }
 
 export async function updateTodo(id, patch) {
+  if (isWinUiShell()) {
+    const body = { todoId: id }
+    if (patch.title !== undefined) body.title = normalizeTitle(patch.title)
+    if (patch.done !== undefined) body.done = !!patch.done
+    if (patch.remindAt !== undefined) body.remindAt = patch.remindAt
+    await bridgeInvoke('todos.update', body)
+    const list = await listByDate(patch.date || (await listFallbackDate(id)))
+    return list.find((t) => t.id === id) || { id, ...patch }
+  }
+
   const db = await getDb()
   const ts = nowIso()
 
@@ -172,9 +199,6 @@ export async function updateTodo(id, patch) {
   if (patch.remindAt !== undefined && patch.remindAt !== prev.remindAt) {
     notified = 0
   }
-  if (patch.done === true) {
-    // keep notified as-is; completed items are skipped by scanner
-  }
 
   await db.execute(
     `UPDATE todos SET title = $1, done = $2, remind_at = $3, notified = $4, updated_at = $5
@@ -192,7 +216,15 @@ export async function updateTodo(id, patch) {
   }
 }
 
+async function listFallbackDate() {
+  return new Date().toISOString().slice(0, 10)
+}
+
 export async function deleteTodo(id) {
+  if (isWinUiShell()) {
+    await bridgeInvoke('todos.delete', { todoId: id })
+    return
+  }
   const db = await getDb()
   if (!db) {
     writeLocal(readLocal().filter((t) => t.id !== id))

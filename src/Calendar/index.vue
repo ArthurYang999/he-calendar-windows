@@ -2,10 +2,8 @@
 import { ref, computed, onMounted, onUnmounted, watch } from 'vue';
 import dayjs from 'dayjs';
 import { SolarDay, LunarDay, SolarTerm, LegalHoliday, SolarFestival, LunarFestival, Taboo, PengZu, FetusDay } from 'tyme4ts';
-import { ChevronLeft, ChevronRight, Palette, Settings, Github, ExternalLink, User, Sun, Moon, Monitor, CalendarDays, CloudSun, MapPin, LocateFixed } from 'lucide-vue-next';
+import { ChevronLeft, ChevronRight, Palette, Settings, Github, ExternalLink, User, Sun, Moon, Monitor, CalendarDays, PanelLeft } from 'lucide-vue-next';
 import { projectConfig } from '../config';
-import { searchLocations, fetchWeatherData, autoLocateAndFetch, LocationError, WeatherError } from '../services/weather-service.js'
-import { getTempColor } from '../services/weather-models.js'
 import TodoPanel from './TodoPanel.vue'
 import { monthSummary } from '../services/todo-service.js'
 import {
@@ -13,18 +11,40 @@ import {
   setRemindersEnabled,
   getLaunchAtLogin,
   setLaunchAtLogin,
+  getTrayTimeFormat,
+  setTrayTimeFormat,
+  getTrayDateFormat,
+  setTrayDateFormat,
+  getTrayShowDate,
+  setTrayShowDate,
   isTauri,
 } from '../services/settings-service.js'
+import { isWinUiShell, bridgeInvoke } from '../services/winui-bridge.js'
 
 const props = defineProps(['enterAction']);
 
 const currentMonth = ref(dayjs());
 const selectedDate = ref(dayjs());
-const currentTheme = ref('auto'); // 默认为智能主题
+const currentTheme = ref('system-minimal'); // 默认系统简约
 const showYearPicker = ref(false);
 const showMonthPicker = ref(false);
 const showThemePicker = ref(false);
 const showSettings = ref(false);
+const isAlmanacShell = ref(
+  typeof window !== 'undefined' && (
+    new URLSearchParams(window.location.search).get('mode') === 'almanac' ||
+    document.documentElement.dataset.shell === 'winui-almanac'
+  )
+);
+const isFlyoutShell = ref(
+  typeof window !== 'undefined' && !isAlmanacShell.value && (
+    (isWinUiShell() && new URLSearchParams(window.location.search).get('mode') !== 'almanac') ||
+    new URLSearchParams(window.location.search).get('mode') === 'flyout' ||
+    document.documentElement.dataset.shell === 'winui-flyout'
+  )
+);
+/** 浮层默认收起扩展信息；网页/uTools 始终展开；独立黄历窗始终展开 */
+const showExtendedPanel = ref(!isFlyoutShell.value);
 // 统一的存储工具函数，优先使用 uTools dbStorage，降级到 localStorage
 const getStorageItem = (key, defaultValue) => {
   if (window.utools && window.utools.dbStorage) {
@@ -51,13 +71,26 @@ const showSolarFestivals = ref(getStorageItem('calendar-show-solar-festivals', '
 const showLunarFestivals = ref(getStorageItem('calendar-show-lunar-festivals', 'true') === 'true'); // 农历传统节日
 const showInternationalFestivals = ref(getStorageItem('calendar-show-international-festivals', 'true') === 'true'); // 国际节日
 const showSolarTerms = ref(getStorageItem('calendar-show-solar-terms', 'true') === 'true'); // 二十四节气
-const showWeather = ref(getStorageItem('calendar-show-weather', 'true') === 'true'); // 天气显示开关
-const isUtools = ref(!!window.utools); // 是否在 uTools 环境
 const isDesktop = ref(isTauri()); // Tauri Windows 桌面
 const showFestivalPanel = ref(false); // 节日配置面板展开状态
 const todoSummary = ref({}); // { 'YYYY-MM-DD': unfinishedCount }
 const remindersEnabled = ref(true);
 const launchAtLogin = ref(false);
+const trayTimeFormat = ref('HH:mm');
+const trayDateFormat = ref('yyyy/M/d');
+const trayShowDate = ref(true);
+
+const trayTimePresets = [
+  { label: '24小时', value: 'HH:mm' },
+  { label: '带秒', value: 'HH:mm:ss' },
+  { label: '12小时', value: 'h:mm tt' },
+];
+const trayDatePresets = [
+  { label: '年/月/日', value: 'yyyy/M/d' },
+  { label: '月/日', value: 'M/d' },
+  { label: '月日', value: 'M月d日' },
+  { label: '星期', value: 'ddd' },
+];
 
 // 节日弹出卡片状态
 const showFestivalCard = ref(false);
@@ -303,6 +336,7 @@ const months = [
 ];
 
 const themes = [
+  { id: 'system-minimal', name: '系统简约', color: 'linear-gradient(135deg, #111111 0%, #f3f3f3 100%)' },
   { id: 'auto', name: '智能动态', color: 'linear-gradient(135deg, #8DB5D8 0%, #E9BB4E 100%)' },
   { id: 'default', name: '素雅', color: '#A3D5E0' },
   { id: 'ink', name: '水墨', color: '#111827' },
@@ -375,14 +409,22 @@ const getThemeConfigById = (themeId) => {
   }
   
   const themeMap = {
-    'default': { primaryColor: '#A3D5E0', bgColor: isDark ? '#1a1a1a' : '#f9fafb', accentColor: '#7db4c4', name: '素雅' },
-    'ink': { primaryColor: isDark ? '#9ca3af' : '#111827', bgColor: isDark ? '#111827' : '#f3f4f6', accentColor: isDark ? '#6b7280' : '#374151', name: '水墨' },
-    'red': { primaryColor: '#b91c1c', bgColor: isDark ? '#1a1a1a' : '#fff1f2', accentColor: '#b91c1c', name: '朱红' },
-    'gold': { primaryColor: '#b45309', bgColor: isDark ? '#1a1a1a' : '#fffbeb', accentColor: '#b45309', name: '鎏金' },
-    'cyan': { primaryColor: '#1e40af', bgColor: isDark ? '#1a1a1a' : '#eff6ff', accentColor: '#1e40af', name: '黛蓝' },
+    'system-minimal': {
+      id: 'system-minimal',
+      primaryColor: isDark ? '#f3f3f3' : '#111111',
+      bgColor: isDark ? '#202020' : '#ffffff',
+      accentColor: isDark ? '#cfcfcf' : '#2b2b2b',
+      name: '系统简约',
+    },
+    'default': { id: 'default', primaryColor: '#A3D5E0', bgColor: isDark ? '#1a1a1a' : '#f9fafb', accentColor: '#7db4c4', name: '素雅' },
+    'ink': { id: 'ink', primaryColor: isDark ? '#9ca3af' : '#111827', bgColor: isDark ? '#111827' : '#f3f4f6', accentColor: isDark ? '#6b7280' : '#374151', name: '水墨' },
+    'red': { id: 'red', primaryColor: '#b91c1c', bgColor: isDark ? '#1a1a1a' : '#fff1f2', accentColor: '#b91c1c', name: '朱红' },
+    'gold': { id: 'gold', primaryColor: '#b45309', bgColor: isDark ? '#1a1a1a' : '#fffbeb', accentColor: '#b45309', name: '鎏金' },
+    'cyan': { id: 'cyan', primaryColor: '#1e40af', bgColor: isDark ? '#1a1a1a' : '#eff6ff', accentColor: '#1e40af', name: '黛蓝' },
   };
   
-  return themeMap[themeId] || themeMap['default'];
+  const resolved = themeMap[themeId] || themeMap['system-minimal'];
+  return { ...resolved, id: resolved.id || themeId || 'system-minimal' };
 };
 
 // 计算当前应用的主题（包含预览）
@@ -478,15 +520,22 @@ const applyTheme = () => {
   
   // 夜间模式变量
   if (isDark) {
-    textColor = '#e5e7eb';
-    root.style.setProperty('--header-bg', '#1e1e1e');
-    root.style.setProperty('--cell-bg', '#262626');
-    borderColor = 'rgba(255,255,255,0.08)';
-    hoverBg = 'rgba(255,255,255,0.05)';
-    panelBg = '#1e1e1e';
-    secondaryText = '#9ca3af';
+    textColor = theme.id === 'system-minimal' ? '#f3f3f3' : '#e5e7eb';
+    root.style.setProperty('--header-bg', theme.id === 'system-minimal' ? '#202020' : '#1e1e1e');
+    root.style.setProperty('--cell-bg', theme.id === 'system-minimal' ? '#2a2a2a' : '#262626');
+    borderColor = theme.id === 'system-minimal' ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.08)';
+    hoverBg = theme.id === 'system-minimal' ? 'rgba(255,255,255,0.08)' : 'rgba(255,255,255,0.05)';
+    panelBg = theme.id === 'system-minimal' ? '#202020' : '#1e1e1e';
+    secondaryText = theme.id === 'system-minimal' ? '#b3b3b3' : '#9ca3af';
     root.style.setProperty('--scrollbar-thumb', 'rgba(255,255,255,0.2)');
   } else {
+    if (theme.id === 'system-minimal') {
+      textColor = '#111111';
+      borderColor = 'rgba(0,0,0,0.1)';
+      hoverBg = 'rgba(0,0,0,0.04)';
+      panelBg = '#ffffff';
+      secondaryText = '#6b6b6b';
+    }
     root.style.setProperty('--header-bg', '#ffffff');
     root.style.setProperty('--cell-bg', '#ffffff');
     root.style.setProperty('--scrollbar-thumb', 'rgba(0,0,0,0.1)');
@@ -497,6 +546,29 @@ const applyTheme = () => {
   root.style.setProperty('--hover-bg', hoverBg);
   root.style.setProperty('--panel-bg', panelBg);
   root.style.setProperty('--secondary-text', secondaryText);
+
+  // 今日高亮：灰白底 + 黑字（勿用 primary：系统简约夜间 primary 近白会导致白底白字）
+  const themeKey = previewTheme.value || currentTheme.value;
+  if (themeKey === 'system-minimal' || theme.id === 'system-minimal') {
+    root.style.setProperty('--today-bg', '#cfcfcf');
+    root.style.setProperty('--today-fg', '#111111');
+    root.style.setProperty('--today-border', 'transparent');
+    root.style.setProperty('--today-shadow', 'transparent');
+  } else {
+    root.style.setProperty('--today-bg', theme.primaryColor);
+    root.style.setProperty('--today-fg', '#ffffff');
+    root.style.setProperty('--today-border', 'transparent');
+    root.style.setProperty('--today-shadow', withAlpha(theme.primaryColor, 0.35));
+  }
+
+  // 浮层：整窗透明，仅左右面板不透明，中间 5px 间隔透出桌面
+  if (isFlyoutShell.value) {
+    document.documentElement.style.backgroundColor = 'transparent';
+    document.body.style.backgroundColor = 'transparent';
+  } else {
+    document.documentElement.style.backgroundColor = theme.bgColor;
+    document.body.style.backgroundColor = theme.bgColor;
+  }
 
   const almanacLine = mixColors(theme.accentColor, borderColor, 0.18);
   const almanacSoftLine = mixColors(theme.accentColor, borderColor, 0.08);
@@ -627,6 +699,25 @@ const calendarDays = computed(() => {
   return days;
 });
 
+/** 当月工作日（法定口径：工作日去休假，调休「班」计入） */
+const monthWorkdayCount = computed(() => {
+  const start = currentMonth.value.startOf('month');
+  const daysInMonth = currentMonth.value.daysInMonth();
+  let count = 0;
+  for (let i = 0; i < daysInMonth; i++) {
+    const date = start.add(i, 'day');
+    const solarDay = SolarDay.fromYmd(date.year(), date.month() + 1, date.date());
+    const legal = solarDay.getLegalHoliday();
+    if (legal) {
+      if (legal.isWork()) count += 1;
+      continue;
+    }
+    const dow = date.day(); // 0=Sun ... 6=Sat
+    if (dow !== 0 && dow !== 6) count += 1;
+  }
+  return count;
+});
+
 const baseWeekDays = ['日', '一', '二', '三', '四', '五', '六'];
 const weekDays = computed(() => {
   const days = [...baseWeekDays];
@@ -730,199 +821,6 @@ const toggleSolarTerms = () => {
   setStorageItem('calendar-show-solar-terms', showSolarTerms.value.toString());
 };
 
-// 天气开关
-const toggleWeather = () => {
-  showWeather.value = !showWeather.value;
-  setStorageItem('calendar-show-weather', showWeather.value.toString());
-  if (showWeather.value && !weatherData.value) {
-    fetchWeather();
-  }
-};
-
-// 天气数据
-const weatherData = ref(null);
-const weatherLoading = ref(false);
-const weatherError = ref('');
-const weatherLocatedName = ref(''); // 自动定位到的地点名称
-let weatherTimer = null;
-const showWeatherCard = ref(false);
-let weatherCardTimer = null;
-
-// 天气位置存储辅助函数
-const getSavedWeatherLocation = () => {
-  try {
-    const raw = isUtools.value
-      ? window.utools?.dbStorage?.getItem('calendar-weather-location')
-      : localStorage.getItem('calendar-weather-location')
-    return raw ? JSON.parse(raw) : null
-  } catch { return null }
-};
-
-const saveWeatherLocation = (location) => {
-  if (!location) {
-    if (isUtools.value) {
-      window.utools?.dbStorage?.removeItem('calendar-weather-location')
-    } else {
-      localStorage.removeItem('calendar-weather-location')
-    }
-    return
-  }
-  const json = JSON.stringify(location)
-  if (isUtools.value) {
-    window.utools?.dbStorage?.setItem('calendar-weather-location', json)
-  } else {
-    localStorage.setItem('calendar-weather-location', json)
-  }
-};
-
-const startHideWeatherCard = () => {
-  weatherCardTimer = setTimeout(() => {
-    showWeatherCard.value = false;
-  }, 200);
-};
-
-const cancelHideWeatherCard = () => {
-  if (weatherCardTimer) {
-    clearTimeout(weatherCardTimer);
-    weatherCardTimer = null;
-  }
-};
-
-const formatForecastDate = (dateStr) => {
-  const today = dayjs().startOf('day');
-  const target = dayjs(dateStr, 'YYYY-MM-DD');
-  const diff = target.diff(today, 'day');
-  if (diff === 0) return '今天';
-  if (diff === 1) return '明天';
-  if (diff === 2) return '后天';
-  const weekdays = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
-  return weekdays[target.day()];
-};
-
-// 数据转换：将 service 层返回的天气数据映射为组件内部格式
-const mapWeatherData = (data) => ({
-  temp: data.current?.temp,
-  feelsLike: data.current?.feelsLike,
-  humidity: data.current?.humidity,
-  desc: data.current?.weather,
-  windSpeed: data.current?.windSpeed,
-  windDir: data.current?.windDir,
-  icon: data.current?.icon,
-  locationName: data.locationName,
-  forecast: data.daily?.slice(1, 4).map(d => ({
-    date: d.date,
-    maxTemp: d.maxTemp,
-    minTemp: d.minTemp,
-    desc: d.weatherDay,
-    icon: d.icon
-  })),
-  hourly: data.hourly?.slice(0, 24).map(h => ({
-    hour: h.hour,
-    temp: h.temp,
-    desc: h.weather,
-    icon: h.icon
-  }))
-});
-
-const fetchWeather = async () => {
-  if (!showWeather.value) return;
-  weatherLoading.value = true;
-  weatherError.value = '';
-  try {
-    const savedLocation = getSavedWeatherLocation()
-
-    if (savedLocation && savedLocation.locationKey) {
-      // 有已保存位置，直接获取天气
-      const data = await fetchWeatherData(savedLocation)
-      weatherData.value = mapWeatherData(data)
-      weatherLocatedName.value = data.locationName
-    } else if (!isUtools.value) {
-      // 网页版：自动定位
-      const result = await autoLocateAndFetch()
-      weatherData.value = mapWeatherData(result.weatherData)
-      saveWeatherLocation(result.location)
-      weatherLocatedName.value = result.weatherData.locationName
-    }
-  } catch (err) {
-    console.warn('获取天气失败:', err)
-    if (err instanceof LocationError) {
-      weatherError.value = '定位失败'
-    } else if (err instanceof WeatherError) {
-      weatherError.value = '获取天气失败'
-    } else {
-      weatherError.value = '获取天气失败'
-    }
-  } finally {
-    weatherLoading.value = false;
-  }
-};
-
-// 天气位置搜索
-const locationSearchQuery = ref('');
-const locationSearchResults = ref([]);
-const locationSearching = ref(false);
-const locationInputFocused = ref(false);
-let locationSearchTimer = null;
-
-const handleLocationBlur = () => {
-  // 延迟关闭，让搜索结果点击事件有时间触发
-  setTimeout(() => {
-    locationInputFocused.value = false;
-  }, 200);
-};
-
-const searchLocation = (query) => {
-  locationSearchQuery.value = query;
-  if (locationSearchTimer) clearTimeout(locationSearchTimer);
-  if (!query || query.length < 2) {
-    locationSearchResults.value = [];
-    return;
-  }
-  locationSearchTimer = setTimeout(async () => {
-    locationSearching.value = true;
-    try {
-      const results = await searchLocations(query)
-      locationSearchResults.value = results.map(item => ({
-        name: item.name,
-        path: item.affiliation || '',
-        locationKey: item.locationKey,
-        lat: item.lat,
-        lon: item.lon
-      }))
-    } catch (e) {
-      locationSearchResults.value = [];
-    } finally {
-      locationSearching.value = false;
-    }
-  }, 300);
-};
-
-const selectLocation = async (item) => {
-  const location = {
-    name: item.name,
-    locationKey: item.locationKey,
-    lat: item.lat,
-    lon: item.lon
-  }
-  saveWeatherLocation(location)
-  weatherLocatedName.value = item.name
-  locationSearchResults.value = []
-  locationSearchQuery.value = ''
-  locationInputFocused.value = false
-
-  try {
-    const data = await fetchWeatherData(location)
-    weatherData.value = mapWeatherData(data)
-  } catch (err) {
-    console.warn('获取天气失败:', err)
-  }
-};
-
-const clearLocationSearch = () => {
-  locationSearchQuery.value = '';
-  locationSearchResults.value = [];
-};
-
 const toggleSettings = () => {
   showSettings.value = !showSettings.value;
   if (showSettings.value) {
@@ -939,6 +837,22 @@ const toggleThemePicker = () => {
     showMonthPicker.value = false;
     showSettings.value = false;
     showFestivalList.value = false;
+  }
+};
+
+const toggleExtendedPanel = async () => {
+  if (!isFlyoutShell.value) return;
+  const next = !showExtendedPanel.value;
+  showExtendedPanel.value = next;
+  if (isWinUiShell()) {
+    try {
+      await bridgeInvoke('shell.setAlmanacExpanded', {
+        expanded: next,
+        date: selectedDate.value.format('YYYY-MM-DD'),
+      });
+    } catch (e) {
+      console.warn('setAlmanacExpanded failed', e);
+    }
   }
 };
 
@@ -964,18 +878,12 @@ const openExternalLink = (url) => {
 
 const selectDate = (day) => {
   selectedDate.value = day.date;
+  if (isFlyoutShell.value && showExtendedPanel.value && isWinUiShell()) {
+    bridgeInvoke('shell.syncAlmanacDate', {
+      date: day.date.format('YYYY-MM-DD'),
+    }).catch(() => {});
+  }
 };
-
-// 计算选中日期和今天的距离
- const dayDifference = computed(() => {
-  const today = dayjs().startOf('day');
-  const selected = selectedDate.value.startOf('day');
-  const diff = selected.diff(today, 'day');
-  
-  if (diff === 0) return ''; // 今天不显示
-  if (diff > 0) return `${diff}天后`;
-  return `${Math.abs(diff)}天前`;
-});
 
 let lastScrollTime = 0;
 let monthWheelAccumulator = 0;
@@ -1497,14 +1405,92 @@ async function toggleLaunchAtLogin() {
   }
 }
 
+async function applyTrayTimeFormat(fmt) {
+  trayTimeFormat.value = fmt;
+  await setTrayTimeFormat(fmt);
+}
+
+async function applyTrayDateFormat(fmt) {
+  trayDateFormat.value = fmt;
+  trayShowDate.value = true;
+  await setTrayShowDate(true);
+  await setTrayDateFormat(fmt);
+}
+
+async function applyTrayHideDate() {
+  trayShowDate.value = false;
+  await setTrayShowDate(false);
+}
+
 watch(currentMonth, () => {
   refreshTodoSummary();
 });
 
 onMounted(async () => {
-  const savedTheme = getStorageItem('calendar-theme', 'auto');
+  const savedTheme = getStorageItem('calendar-theme', 'system-minimal');
   currentTheme.value = savedTheme;
-  
+
+  isAlmanacShell.value =
+    new URLSearchParams(window.location.search).get('mode') === 'almanac' ||
+    document.documentElement.dataset.shell === 'winui-almanac';
+  isFlyoutShell.value =
+    !isAlmanacShell.value && (
+      new URLSearchParams(window.location.search).get('mode') === 'flyout' ||
+      document.documentElement.dataset.shell === 'winui-flyout' ||
+      (isWinUiShell() && new URLSearchParams(window.location.search).get('mode') !== 'almanac')
+    );
+  if (isAlmanacShell.value) {
+    document.body.classList.add('is-flyout', 'is-almanac-shell');
+    document.documentElement.classList.add('is-flyout', 'is-almanac-shell');
+    document.documentElement.dataset.shell = 'winui-almanac';
+    showExtendedPanel.value = true;
+  } else if (isFlyoutShell.value) {
+    showExtendedPanel.value = false;
+    document.body.classList.add('is-flyout');
+    document.documentElement.classList.add('is-flyout');
+    document.documentElement.dataset.shell = 'winui-flyout';
+    if (window.chrome?.webview) {
+      window.chrome.webview.addEventListener('message', (event) => {
+        try {
+          const msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+          if (msg?.type === 'almanac.collapse') showExtendedPanel.value = false;
+          if (msg?.type === 'shell.openPanel') {
+            closePickers();
+            if (msg.panel === 'settings') {
+              showSettings.value = true;
+            } else if (msg.panel === 'theme') {
+              showThemePicker.value = true;
+            }
+          }
+          if (msg?.type === 'shell.setTheme' && msg.themeId) {
+            switchTheme(msg.themeId);
+          }
+          if (msg?.type === 'shell.setColorMode' && msg.mode) {
+            switchColorMode(msg.mode);
+          }
+        } catch { /* ignore */ }
+      });
+    }
+  } else {
+    showExtendedPanel.value = true;
+  }
+
+  if (isAlmanacShell.value && window.chrome?.webview) {
+    window.chrome.webview.addEventListener('message', (event) => {
+      try {
+        const msg = typeof event.data === 'string' ? JSON.parse(event.data) : event.data;
+        if (msg?.type === 'shell.setDate' && msg.date) {
+          const d = dayjs(msg.date);
+          if (d.isValid()) {
+            selectedDate.value = d;
+            currentMonth.value = d.startOf('month');
+          }
+        }
+        if (msg?.type === 'shell.setTheme' && msg.themeId) switchTheme(msg.themeId);
+        if (msg?.type === 'shell.setColorMode' && msg.mode) switchColorMode(msg.mode);
+      } catch { /* ignore */ }
+    });
+  }
   // 初始化系统深色模式检测
   systemDarkMode.value = detectSystemDarkMode();
   applyTheme();
@@ -1518,23 +1504,35 @@ onMounted(async () => {
   
   // 监听系统主题变化（web 原生方式，uTools 官方推荐）
   darkModeMediaQuery.addEventListener('change', handleSystemThemeChange);
-  
-  // 获取天气数据
-  if (showWeather.value) {
-    fetchWeather();
-    // 每30分钟刷新一次天气
-    weatherTimer = setInterval(fetchWeather, 30 * 60 * 1000);
-  }
 
   refreshTodoSummary();
   remindersEnabled.value = await getRemindersEnabled();
   launchAtLogin.value = await getLaunchAtLogin();
+  if (isFlyoutShell.value) {
+    trayTimeFormat.value = await getTrayTimeFormat();
+    trayDateFormat.value = await getTrayDateFormat();
+    trayShowDate.value = await getTrayShowDate();
+  }
 });
+
+async function exitDesktopShell() {
+  try {
+    if (isWinUiShell()) {
+      await bridgeInvoke('shell.exit');
+      return;
+    }
+  } catch (e) {
+    console.warn('shell.exit bridge failed', e);
+  }
+  // Fallback: fire-and-forget postMessage without waiting for RPC reply.
+  try {
+    window.chrome?.webview?.postMessage(JSON.stringify({ type: 'shell.exit' }));
+  } catch (_) { /* ignore */ }
+}
 
 onUnmounted(() => {
   window.removeEventListener('click', handleGlobalClick);
   darkModeMediaQuery.removeEventListener('change', handleSystemThemeChange);
-  if (weatherTimer) clearInterval(weatherTimer);
 });
 
 // 监听主题变化
@@ -1544,7 +1542,18 @@ watch(activeThemeConfig, () => {
 </script>
 
 <template>
-  <div class="calendar-container" :class="['theme-' + currentTheme, isDarkMode ? 'dark-mode' : 'light-mode']" :data-mode="isDarkMode ? 'dark' : 'light'">
+  <div
+    class="calendar-container"
+    :class="[
+      'theme-' + currentTheme,
+      isDarkMode ? 'dark-mode' : 'light-mode',
+      {
+        'is-flyout-shell': isFlyoutShell && !isAlmanacShell,
+        'is-almanac-only': isAlmanacShell,
+      },
+    ]"
+    :data-mode="isDarkMode ? 'dark' : 'light'"
+  >
     <!-- Header -->
     <header class="calendar-header">
       <div class="current-info" @click.stop>
@@ -1554,90 +1563,9 @@ watch(activeThemeConfig, () => {
         <span class="year-month" @click="toggleMonthPicker" :class="{ active: showMonthPicker }">
           {{ currentMonth.format('MM月') }}
         </span>
-        <span v-if="dayDifference" class="day-diff">{{ dayDifference }}</span>
-        
-        <!-- 天气摘要入口 -->
-        <!-- 天气加载中 -->
-        <div v-if="showWeather && weatherLoading" class="weather-brief weather-brief-loading">
-          <span class="weather-brief-icon">⏳</span>
-          <span class="weather-brief-desc">加载天气中...</span>
-        </div>
-        <div v-else-if="showWeather && weatherData" class="weather-brief"
-             @mouseenter="showWeatherCard = true"
-             @mouseleave="startHideWeatherCard()">
-          <span class="weather-brief-icon">{{ weatherData.icon }}</span>
-          <span class="weather-brief-temp">{{ weatherData.temp }}°C</span>
-          <span class="weather-brief-desc">{{ weatherData.desc }}</span>
-          <span v-if="weatherData.locationName" class="weather-brief-city">· {{ weatherData.locationName }}</span>
-          
-          <!-- 悬停详情卡片 -->
-          <div v-if="showWeatherCard" class="weather-card"
-               @mouseenter="cancelHideWeatherCard()"
-               @mouseleave="startHideWeatherCard()">
-            <!-- 当前天气 -->
-            <div class="weather-card-current">
-              <div class="weather-card-main">
-                <span class="weather-card-icon">{{ weatherData.icon }}</span>
-                <div class="weather-card-temp-wrap">
-                  <span class="weather-card-temp" :style="{ color: getTempColor(weatherData.temp) }">{{ weatherData.temp }}°C</span>
-                  <span class="weather-card-desc">{{ weatherData.desc }}</span>
-                </div>
-              </div>
-              <div class="weather-card-detail">
-                <div class="detail-cell">
-                  <span class="detail-label">体感</span>
-                  <span class="detail-value">{{ weatherData.feelsLike }}°C</span>
-                </div>
-                <div class="detail-cell">
-                  <span class="detail-label">湿度</span>
-                  <span class="detail-value">{{ weatherData.humidity }}%</span>
-                </div>
-                <div class="detail-cell">
-                  <span class="detail-label">风速</span>
-                  <span class="detail-value">{{ weatherData.windSpeed }}km/h</span>
-                </div>
-              </div>
-              <div v-if="weatherData.locationName" class="weather-card-location">
-                📍 {{ weatherData.locationName }}
-              </div>
-            </div>
-            <!-- 逐小时预报 -->
-            <div v-if="weatherData.hourly && weatherData.hourly.length" class="weather-hourly">
-              <div class="weather-hourly-scroll">
-                <div v-for="(item, idx) in weatherData.hourly" :key="idx" class="weather-hourly-item">
-                  <span class="hourly-time">{{ item.hour }}</span>
-                  <span class="hourly-icon">{{ item.icon }}</span>
-                  <span class="hourly-temp" :style="{ color: getTempColor(item.temp) }">{{ item.temp }}°</span>
-                </div>
-              </div>
-            </div>
-            <!-- 未来预报 -->
-            <div v-if="weatherData.forecast && weatherData.forecast.length" class="weather-card-forecast">
-              <div v-for="(day, idx) in weatherData.forecast" :key="idx" class="weather-card-forecast-item">
-                <span class="forecast-date">{{ formatForecastDate(day.date) }}</span>
-                <span class="forecast-icon">{{ day.icon }}</span>
-                <span class="forecast-desc">{{ day.desc }}</span>
-                <span class="forecast-temp">
-                  <span :style="{ color: getTempColor(day.minTemp) }">{{ day.minTemp }}°</span>
-                  <span class="forecast-temp-divider">~</span>
-                  <span :style="{ color: getTempColor(day.maxTemp) }">{{ day.maxTemp }}°</span>
-                </span>
-              </div>
-            </div>
-          </div>
-        </div>
-        <!-- 天气加载失败 -->
-        <div v-else-if="showWeather && weatherError" class="weather-brief weather-brief-error"
-             @click="fetchWeather">
-          <span class="weather-brief-icon">⚠️</span>
-          <span class="weather-brief-desc">{{ weatherError }}</span>
-          <span class="weather-brief-retry">点击重试</span>
-        </div>
-        <div v-else-if="showWeather && !weatherLoading" class="weather-brief weather-brief-hint"
-             @click="toggleSettings">
-          <span class="weather-brief-icon">🌤️</span>
-          <span class="weather-brief-desc">搜索城市以开启天气</span>
-        </div>
+        <span class="workday-count" title="本月工作日（含调休上班，不含法定休假）">
+          工作日 {{ monthWorkdayCount }}
+        </span>
         
         <!-- Year Picker Dropdown -->
         <div v-if="showYearPicker" class="picker-dropdown year-picker" @click.stop @wheel.prevent="handleScroll">
@@ -1669,6 +1597,17 @@ watch(activeThemeConfig, () => {
         <button @click="prevMonth" class="icon-btn"><ChevronLeft :size="20" /></button>
         <button @click="goToday" class="text-btn">今天</button>
         <button @click="nextMonth" class="icon-btn"><ChevronRight :size="20" /></button>
+
+        <button
+          v-if="isFlyoutShell"
+          type="button"
+          class="icon-btn extended-toggle"
+          :class="{ active: showExtendedPanel }"
+          @click.stop="toggleExtendedPanel"
+          :title="showExtendedPanel ? '收起扩展信息' : '查看扩展信息'"
+        >
+          <PanelLeft :size="20" />
+        </button>
         
         <div class="festival-list-wrapper">
           <button @click.stop="toggleFestivalList" class="icon-btn" :class="{ active: showFestivalList }">
@@ -1710,8 +1649,15 @@ watch(activeThemeConfig, () => {
           </div>
         </div>
         
-        <div class="theme-picker">
-          <button @click.stop="toggleThemePicker" class="icon-btn theme-trigger" :class="{ active: showThemePicker }">
+        <Teleport to="#flyout-left-tools" :disabled="true">
+          <div class="flyout-tools-cluster">
+        <div class="theme-picker" :class="{ 'is-tray-driven': isFlyoutShell }">
+          <button
+            v-if="!isFlyoutShell"
+            @click.stop="toggleThemePicker"
+            class="icon-btn theme-trigger"
+            :class="{ active: showThemePicker }"
+          >
             <Palette :size="20" class="theme-icon" />
           </button>
           <div v-if="showThemePicker" class="theme-options shadow-lg" @click.stop>
@@ -1760,8 +1706,13 @@ watch(activeThemeConfig, () => {
           </div>
         </div>
 
-        <div class="settings-wrapper">
-          <button @click.stop="toggleSettings" class="icon-btn" :class="{ active: showSettings }">
+        <div class="settings-wrapper" :class="{ 'is-tray-driven': isFlyoutShell }">
+          <button
+            v-if="!isFlyoutShell"
+            @click.stop="toggleSettings"
+            class="icon-btn"
+            :class="{ active: showSettings }"
+          >
             <Settings :size="20" />
           </button>
           
@@ -1815,52 +1766,6 @@ watch(activeThemeConfig, () => {
             </div>
             
             <div class="settings-separator"></div>
-            
-            <div class="settings-section">
-              <div class="section-title weather-header">
-                <CloudSun :size="14" class="weather-title-icon" />
-                <span>天气显示</span>
-                <span class="weather-toggle" :class="{ active: showWeather }" @click="toggleWeather">
-                  {{ showWeather ? '开' : '关' }}
-                </span>
-              </div>
-              <div v-if="showWeather" class="weather-location-input">
-                <div class="location-search-box">
-                  <span v-if="weatherLocatedName && !locationInputFocused && !locationSearchQuery" class="location-prefix">
-                    <MapPin :size="12" />
-                    {{ weatherLocatedName }}
-                  </span>
-                  <input 
-                    type="text" 
-                    :value="locationSearchQuery" 
-                    @input="e => searchLocation(e.target.value)"
-                    @focus="e => { locationInputFocused = true; if (e.target.value.length >= 2) searchLocation(e.target.value) }"
-                    @blur="handleLocationBlur"
-                    :placeholder="locationInputFocused || locationSearchQuery ? '搜索城市/区镇' : (weatherLocatedName || '搜索城市/区镇')"
-                    class="location-input"
-                  />
-                  <span v-if="!isUtools" class="location-auto-btn" @click="saveWeatherLocation(null); clearLocationSearch(); fetchWeather();">
-                    <LocateFixed :size="12" />
-                  </span>
-                  <div v-if="locationSearchResults.length > 0" class="location-results">
-                    <div 
-                      v-for="(item, idx) in locationSearchResults" 
-                      :key="idx"
-                      class="location-result-item"
-                      @click="selectLocation(item)"
-                    >
-                      <span class="result-name">{{ item.name }}</span>
-                      <span class="result-path">{{ item.path }}</span>
-                    </div>
-                  </div>
-                  <div v-else-if="locationSearching" class="location-results">
-                    <div class="location-result-item location-searching">搜索中...</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-            
-            <div class="settings-separator"></div>
 
             <div class="settings-section">
               <div class="section-title">待办提醒</div>
@@ -1891,7 +1796,11 @@ watch(activeThemeConfig, () => {
               <div class="about-info">
                 <div class="about-item link-item" @click="openExternalLink(projectConfig.github)">
                   <Github :size="14" class="about-icon" />
-                  <span class="link-text">GitHub 源码</span>
+                  <span class="link-text">Windows 版源码</span>
+                </div>
+                <div class="about-item link-item" @click="openExternalLink(projectConfig.originalGithub)">
+                  <Github :size="14" class="about-icon" />
+                  <span class="link-text">原项目：{{ projectConfig.originalProject }}</span>
                 </div>
                 <div class="about-item link-item" @click="openExternalLink(projectConfig.website)">
                   <ExternalLink :size="14" class="about-icon" />
@@ -1899,20 +1808,66 @@ watch(activeThemeConfig, () => {
                 </div>
                 <div class="about-item">
                   <User :size="14" class="about-icon" />
-                  <span>作者: {{ projectConfig.author }}</span>
+                  <span>原作者: {{ projectConfig.author }}</span>
                 </div>
               </div>
             </div>
+
+            <template v-if="isFlyoutShell">
+              <div class="settings-separator"></div>
+              <div class="settings-section">
+                <div class="section-title">托盘时钟</div>
+                <div class="section-title" style="margin-top: 6px; font-size: 12px; opacity: 0.75;">时间格式</div>
+                <div class="setting-options">
+                  <button
+                    v-for="p in trayTimePresets"
+                    :key="p.value"
+                    type="button"
+                    class="option-btn"
+                    :class="{ active: trayTimeFormat === p.value }"
+                    @click="applyTrayTimeFormat(p.value)"
+                  >{{ p.label }}</button>
+                </div>
+                <div class="section-title" style="margin-top: 10px; font-size: 12px; opacity: 0.75;">日期格式</div>
+                <div class="setting-options">
+                  <button
+                    v-for="p in trayDatePresets"
+                    :key="p.value"
+                    type="button"
+                    class="option-btn"
+                    :class="{ active: trayShowDate && trayDateFormat === p.value }"
+                    @click="applyTrayDateFormat(p.value)"
+                  >{{ p.label }}</button>
+                  <button
+                    type="button"
+                    class="option-btn"
+                    :class="{ active: !trayShowDate }"
+                    @click="applyTrayHideDate"
+                  >不显示</button>
+                </div>
+              </div>
+              <div class="settings-separator"></div>
+              <div class="settings-section">
+                <div class="section-title">桌面浮层</div>
+                <div class="setting-options">
+                  <button type="button" class="theme-option" style="width:100%" @click="exitDesktopShell">
+                    退出合社日历
+                  </button>
+                </div>
+              </div>
+            </template>
             
             <div class="settings-footer">
               <div class="slogan">{{ projectConfig.description }}</div>
             </div>
           </div>
         </div>
+          </div>
+        </Teleport>
       </div>
     </header>
 
-    <div class="main-content">
+    <div class="main-content" :class="{ 'is-flyout-layout': isFlyoutShell }">
       <!-- Calendar Grid -->
       <div class="calendar-grid-wrapper" @wheel.prevent="handleScroll">
         <div class="week-header">
@@ -1950,7 +1905,9 @@ watch(activeThemeConfig, () => {
       </div>
 
       <!-- Almanac Details -->
-      <aside class="almanac-panel">
+      <aside
+        class="almanac-panel"
+      >
         <div class="almanac-header">
           <div class="big-day">{{ selectedDate.date() }}</div>
           <div class="detail-info">
@@ -2134,6 +2091,23 @@ watch(activeThemeConfig, () => {
   padding: 2px 8px;
   background-color: var(--hover-bg);
   border-radius: 4px;
+}
+
+.workday-count {
+  font-size: 0.8rem;
+  color: var(--secondary-text, #6b7280);
+  margin-left: 8px;
+  padding: 2px 8px;
+  background-color: var(--hover-bg);
+  border-radius: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.calendar-container.is-flyout-shell .workday-count {
+  font-size: 0.72rem;
+  margin-left: 4px;
+  padding: 1px 6px;
 }
 
 .current-info {
@@ -2484,6 +2458,132 @@ watch(activeThemeConfig, () => {
   overflow: hidden;
 }
 
+.calendar-container.is-flyout-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--bg-color);
+}
+.calendar-container.is-flyout-shell .calendar-header {
+  flex: 0 0 auto;
+  min-width: 0;
+  background: var(--header-bg, var(--bg-color));
+}
+.calendar-container.is-flyout-shell .main-content {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+.calendar-container.is-flyout-shell .calendar-grid-wrapper {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+  padding: 4px 8px 6px;
+  background: var(--bg-color);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.calendar-container.is-flyout-shell .week-header {
+  flex: 0 0 auto;
+  margin-bottom: 4px;
+}
+.calendar-container.is-flyout-shell .grid-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.calendar-container.is-flyout-shell .grid {
+  gap: 2px;
+}
+.calendar-container.is-flyout-shell .day-cell {
+  padding: 1px 0;
+  border-radius: 3px;
+}
+.calendar-container.is-flyout-shell .day-cell:hover {
+  transform: none;
+  box-shadow: none;
+}
+.calendar-container.is-flyout-shell .solar-day {
+  font-size: 0.78rem;
+  margin-bottom: 0;
+  line-height: 1.15;
+}
+.calendar-container.is-flyout-shell .lunar-day {
+  font-size: 0.5rem;
+  line-height: 1.1;
+}
+/* 主浮层不再内嵌黄历，由独立窗口承载 */
+.calendar-container.is-flyout-shell .almanac-panel {
+  display: none !important;
+}
+
+.calendar-container.is-almanac-only {
+  display: block;
+  height: 100%;
+  overflow: hidden;
+  background: var(--panel-bg, #202020);
+}
+.calendar-container.is-almanac-only .calendar-header,
+.calendar-container.is-almanac-only .calendar-grid-wrapper,
+.calendar-container.is-almanac-only .flyout-tools-cluster {
+  display: none !important;
+}
+.calendar-container.is-almanac-only .main-content {
+  display: block;
+  height: 100%;
+  overflow: hidden;
+}
+.calendar-container.is-almanac-only .almanac-panel {
+  width: 100% !important;
+  max-width: none;
+  height: 100%;
+  box-shadow: none;
+  border: none;
+  border-radius: 0;
+  background: var(--panel-bg, #202020);
+}
+
+.flyout-left-tools {
+  display: none;
+}
+.flyout-tools-cluster {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+}
+.calendar-container.is-flyout-shell .theme-picker.is-tray-driven .theme-options,
+.calendar-container.is-flyout-shell .settings-wrapper.is-tray-driven .settings-panel {
+  position: fixed;
+  top: 44px;
+  right: 10px;
+  left: auto;
+  z-index: 400;
+}
+.calendar-container.is-flyout-shell .extended-toggle.active {
+  background-color: var(--hover-bg);
+  border-color: var(--primary-color);
+  color: var(--primary-color);
+}
+.calendar-container.is-flyout-shell .current-info {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.calendar-container.is-flyout-shell .year-month {
+  font-size: clamp(0.7rem, 2.6vw, 0.9rem);
+  padding: 2px 4px;
+  margin-right: 2px;
+  white-space: nowrap;
+}
+
+.main-content.is-flyout-layout {
+  /* calendar-only flyout */
+}
+
 .calendar-grid-wrapper {
   flex: 1;
   padding: 16px;
@@ -2587,14 +2687,36 @@ watch(activeThemeConfig, () => {
 }
 
 .day-cell.today {
-  background-color: var(--primary-color);
-  box-shadow: 0 4px 12px var(--primary-color);
+  background-color: var(--today-bg, #cfcfcf);
+  border-color: var(--today-border, transparent);
+  box-shadow: none;
   z-index: 1;
 }
 
-.day-cell.today .solar-day,
+.day-cell.today .solar-day {
+  color: var(--today-fg, #111111) !important;
+  font-weight: 700;
+}
+
 .day-cell.today .lunar-day {
-  color: #ffffff !important;
+  color: var(--today-fg, #111111) !important;
+  opacity: 0.85;
+}
+
+.day-cell.today.selected {
+  border-color: var(--today-border, var(--primary-color));
+  background-color: var(--today-bg, #cfcfcf);
+}
+
+/* 系统简约：强制灰白底黑字，避免被 primary 近白色带偏 */
+.theme-system-minimal .day-cell.today,
+.theme-system-minimal .day-cell.today.selected {
+  background-color: #cfcfcf !important;
+  border-color: transparent !important;
+}
+.theme-system-minimal .day-cell.today .solar-day,
+.theme-system-minimal .day-cell.today .lunar-day {
+  color: #111111 !important;
 }
 
 .day-cell.other-month {
@@ -3062,386 +3184,6 @@ watch(activeThemeConfig, () => {
 .festival-tag.active {
   background: var(--primary-color);
   color: #ffffff;
-}
-
-/* 天气显示样式 */
-.weather-header {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.weather-title-icon {
-  color: var(--accent-color);
-}
-
-.weather-toggle {
-  margin-left: auto;
-  font-size: 0.7rem;
-  padding: 2px 8px;
-  border-radius: 10px;
-  cursor: pointer;
-  background: var(--hover-bg);
-  color: var(--secondary-text);
-  transition: all 0.2s;
-}
-
-.weather-toggle.active {
-  background: var(--primary-color);
-  color: #ffffff;
-}
-
-.weather-location-input {
-  margin-top: 8px;
-}
-
-.location-search-box {
-  position: relative;
-  display: flex;
-  align-items: center;
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  background: var(--hover-bg);
-  transition: border-color 0.2s;
-}
-
-.location-search-box:focus-within {
-  border-color: var(--primary-color);
-}
-
-.location-prefix {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  padding: 0 2px 0 8px;
-  font-size: 0.7rem;
-  color: var(--secondary-text);
-  white-space: nowrap;
-  flex-shrink: 0;
-}
-
-.location-input {
-  flex: 1;
-  border: none;
-  background: transparent;
-  padding: 5px 8px;
-  font-size: 0.75rem;
-  color: var(--text-color);
-  outline: none;
-  min-width: 60px;
-}
-
-.location-input::placeholder {
-  color: var(--secondary-text);
-  opacity: 0.7;
-}
-
-.location-auto-btn {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 2px 6px;
-  cursor: pointer;
-  color: var(--secondary-text);
-  opacity: 0.6;
-  flex-shrink: 0;
-  transition: color 0.2s, opacity 0.2s;
-}
-
-.location-auto-btn:hover {
-  color: var(--primary-color);
-  opacity: 1;
-}
-
-.location-results {
-  position: absolute;
-  top: calc(100% + 4px);
-  left: 0;
-  right: 0;
-  background: var(--panel-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  overflow: hidden;
-  z-index: 400;
-  box-shadow: 0 4px 12px rgba(0,0,0,0.1);
-  max-height: 180px;
-  overflow-y: auto;
-}
-
-.location-result-item {
-  padding: 6px 10px;
-  font-size: 0.7rem;
-  color: var(--text-color);
-  cursor: pointer;
-  transition: background 0.15s;
-  border-bottom: 1px solid var(--border-color);
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.location-result-item:last-child {
-  border-bottom: none;
-}
-
-.location-result-item:hover {
-  background: var(--hover-bg);
-}
-
-.result-name {
-  font-weight: 500;
-  white-space: nowrap;
-}
-
-.result-path {
-  font-size: 0.6rem;
-  color: var(--secondary-text);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.location-result-item.location-searching {
-  color: var(--secondary-text);
-  cursor: default;
-  text-align: center;
-  justify-content: center;
-}
-
-/* 天气摘要入口 */
-.weather-brief {
-  position: relative;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  font-size: 0.8rem;
-  color: var(--secondary-text);
-  cursor: default;
-  padding: 4px 10px;
-  border-radius: 16px;
-  transition: background 0.2s;
-  margin-left: 8px;
-}
-
-.weather-brief:hover {
-  background: var(--hover-bg);
-}
-
-.weather-brief-icon {
-  font-size: 1rem;
-}
-
-.weather-brief-temp {
-  font-weight: 600;
-  color: var(--text-color);
-}
-
-.weather-brief-desc {
-  color: var(--secondary-text);
-}
-
-.weather-brief-city {
-  color: var(--secondary-text);
-  opacity: 0.7;
-  font-size: 0.75rem;
-}
-
-/* 悬停详情卡片 */
-.weather-card {
-  position: absolute;
-  top: calc(100% + 8px);
-  left: 50%;
-  transform: translateX(-50%);
-  width: 300px;
-  max-height: 420px;
-  overflow-y: auto;
-  background: var(--panel-bg);
-  border: 1px solid var(--almanac-line);
-  border-radius: 12px;
-  padding: 14px 16px;
-  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
-  z-index: 500;
-  opacity: 0;
-  animation: weatherCardIn 0.2s ease forwards;
-}
-
-@keyframes weatherCardIn {
-  from { opacity: 0; transform: translateX(-50%) translateY(-4px); }
-  to { opacity: 1; transform: translateX(-50%) translateY(0); }
-}
-
-.weather-card {
-  scrollbar-color: var(--scrollbar-thumb, rgba(0,0,0,0.1)) transparent;
-  scrollbar-width: thin;
-}
-
-.weather-card::-webkit-scrollbar {
-  width: 3px;
-}
-
-.weather-card::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb, rgba(0,0,0,0.1));
-  border-radius: 2px;
-}
-
-.weather-card-current {
-  padding-bottom: 12px;
-  border-bottom: 1px solid var(--almanac-line);
-}
-
-.weather-card-main {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.weather-card-icon {
-  font-size: 2.2rem;
-  line-height: 1;
-}
-
-.weather-card-temp-wrap {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.weather-card-temp {
-  font-size: 2rem;
-  font-weight: 700;
-  line-height: 1;
-  color: var(--text-color);
-}
-
-.weather-card-desc {
-  font-size: 0.85rem;
-  color: var(--secondary-text);
-}
-
-.weather-card-detail {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.detail-cell {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  align-items: center;
-  text-align: center;
-}
-
-.detail-label {
-  font-size: 0.7rem;
-  color: var(--secondary-text);
-  opacity: 0.8;
-}
-
-.detail-value {
-  font-size: 0.8rem;
-  font-weight: 500;
-  color: var(--text-color);
-}
-
-.weather-card-location {
-  font-size: 0.7rem;
-  color: var(--secondary-text);
-  opacity: 0.7;
-}
-
-.weather-card-forecast {
-  padding-top: 10px;
-}
-
-.weather-card-forecast-item {
-  display: grid;
-  grid-template-columns: 54px 28px 1fr 60px;
-  align-items: center;
-  gap: 6px;
-  padding: 5px 0;
-  font-size: 0.8rem;
-}
-
-.forecast-date {
-  color: var(--text-color);
-  font-weight: 500;
-}
-
-.forecast-icon {
-  font-size: 1rem;
-  text-align: center;
-}
-
-.forecast-desc {
-  color: var(--secondary-text);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.forecast-temp {
-  text-align: right;
-  font-weight: 500;
-  color: var(--text-color);
-  white-space: nowrap;
-}
-
-.forecast-temp-divider {
-  color: var(--secondary-text);
-  opacity: 0.5;
-  margin: 0 1px;
-}
-
-.weather-hourly {
-  padding: 12px 0;
-  border-bottom: 1px solid var(--almanac-line);
-}
-
-.weather-hourly-scroll {
-  display: flex;
-  overflow-x: auto;
-  gap: 10px;
-  padding: 4px 2px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--scrollbar-thumb, rgba(0,0,0,0.1)) transparent;
-}
-
-.weather-hourly-scroll::-webkit-scrollbar {
-  height: 3px;
-}
-
-.weather-hourly-scroll::-webkit-scrollbar-thumb {
-  background: var(--scrollbar-thumb, rgba(0,0,0,0.1));
-  border-radius: 2px;
-}
-
-.weather-hourly-item {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 3px;
-  min-width: 38px;
-  flex-shrink: 0;
-}
-
-.hourly-time {
-  font-size: 0.65rem;
-  color: var(--secondary-text);
-  white-space: nowrap;
-}
-
-.hourly-icon {
-  font-size: 1rem;
-  line-height: 1.2;
-}
-
-.hourly-temp {
-  font-size: 0.75rem;
-  font-weight: 600;
-  color: var(--text-color);
 }
 
 /* 黄历详情中的节日显示 */

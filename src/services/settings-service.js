@@ -1,6 +1,9 @@
 /**
- * 桌面设置：提醒总开关、开机自启（Tauri）；浏览器预览用 localStorage。
+ * 桌面设置：提醒总开关、开机自启、托盘时钟格式。
+ * WinUI → 宿主桥；Tauri → plugin-sql；浏览器 → localStorage。
  */
+
+import { bridgeInvoke, isWinUiShell } from './winui-bridge.js'
 
 const STORAGE_PREFIX = 'he-calendar-setting:'
 
@@ -15,6 +18,14 @@ async function getDb() {
 }
 
 export async function getSetting(key, defaultValue = '') {
+  if (isWinUiShell()) {
+    try {
+      const v = await bridgeInvoke('settings.get', { key, defaultValue })
+      return v == null || v === '' ? defaultValue : String(v)
+    } catch {
+      return defaultValue
+    }
+  }
   const db = await getDb()
   if (!db) {
     const v = localStorage.getItem(STORAGE_PREFIX + key)
@@ -25,6 +36,10 @@ export async function getSetting(key, defaultValue = '') {
 }
 
 export async function setSetting(key, value) {
+  if (isWinUiShell()) {
+    await bridgeInvoke('settings.set', { key, value: String(value) })
+    return
+  }
   const db = await getDb()
   if (!db) {
     localStorage.setItem(STORAGE_PREFIX + key, String(value))
@@ -66,6 +81,31 @@ export async function setLaunchAtLogin(enabled) {
   const { enable, disable } = await import('@tauri-apps/plugin-autostart')
   if (enabled) await enable()
   else await disable()
+}
+
+export async function getTrayTimeFormat() {
+  return getSetting('tray_time_format', 'HH:mm')
+}
+
+export async function setTrayTimeFormat(format) {
+  await setSetting('tray_time_format', format || 'HH:mm')
+}
+
+export async function getTrayDateFormat() {
+  return getSetting('tray_date_format', 'yyyy/M/d')
+}
+
+export async function setTrayDateFormat(format) {
+  await setSetting('tray_date_format', format || 'yyyy/M/d')
+}
+
+export async function getTrayShowDate() {
+  const v = await getSetting('tray_show_date', 'true')
+  return v !== 'false' && v !== '0'
+}
+
+export async function setTrayShowDate(show) {
+  await setSetting('tray_show_date', show ? 'true' : 'false')
 }
 
 export { isTauri }

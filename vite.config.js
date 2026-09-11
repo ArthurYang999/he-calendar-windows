@@ -8,14 +8,6 @@ export default defineConfig({
   base: './',
   server: {
     strictPort: true,
-    proxy: {
-      // 代理小米天气 API，解决浏览器 CORS 跨域限制（纯网页预览用）
-      '/api/weather': {
-        target: 'https://weatherapi.market.xiaomi.com',
-        changeOrigin: true,
-        rewrite: (path) => path.replace(/^\/api\/weather/, '/wtr-v3'),
-      },
-    },
   },
   envPrefix: ['VITE_', 'TAURI_'],
   build: {

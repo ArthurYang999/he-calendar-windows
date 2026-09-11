@@ -10,7 +10,7 @@ body,
 
 /* 网页版背景 - 大屏幕时显示简约优雅的背景 */
 @media (min-width: 1024px) {
-  body:not(.is-utools) {
+  body:not(.is-utools):not(.is-flyout) {
     background-color: #f8fafc;
     background-image: 
       radial-gradient(at 0% 0%, var(--bg-color, #f8fafc) 0px, transparent 50%),

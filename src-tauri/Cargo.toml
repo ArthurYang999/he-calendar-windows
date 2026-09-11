@@ -1,6 +1,6 @@
 [package]
 name = "he-calendar"
-version = "1.6.0"
+version = "1.6.1"
 description = "合社日历 - Windows 桌面版"
 authors = ["阿裕Addyu"]
 license = "MIT"

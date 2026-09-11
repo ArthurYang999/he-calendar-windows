@@ -1,0 +1,10 @@
+{
+  "profiles": {
+    "HeCalendar.Shell (Package)": {
+      "commandName": "MsixPackage"
+    },
+    "HeCalendar.Shell (Unpackaged)": {
+      "commandName": "Project"
+    }
+  }
+}

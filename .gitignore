@@ -41,4 +41,7 @@ skills-lock.json
   
 # Local Rust toolchain / caches (project-local install)
 .tools/
-src-tauri/target/ 
+src-tauri/target/
+
+# Desktop packaging output (folder / single-exe artifacts)
+dist-desktop/

@@ -15,13 +15,9 @@
 
 ## API / 运行时双环境约束
 
-- `uTools` Electron WebView **不限制 CORS**，可直接请求外部 API；普通浏览器严格限制 CORS。
-- 涉及外部 API 请求时，必须在 API 封装层做**运行时环境检测**：
-  `window.utools` 存在 → 直连上游 API；否则 → 走 `/api/` 代理（EdgeOne Edge Function 或 Vite dev proxy）。
-- 每次改动 API 层（BASE_URL、请求参数、代理配置）后，必须同时验证：
-  1. `npm run dev` 本地浏览器
-  2. uTools 插件开发模式
-  3. `npm run build` 构建后在 Web 端部署验证
+- 当前桌面版无外部天气等 CORS 敏感 API；若后续重新引入外部 HTTP API，须在封装层做运行时环境检测：
+  `window.__TAURI__` / 桌面 WebView → 可直连；普通浏览器 → 走本地/边缘代理。
+- 改动 API 层后需验证桌面端与（如保留）浏览器预览端。
 
 ## 版本发布检查清单
 
@@ -31,3 +27,12 @@
 - `版本说明.txt` → 新增版本条目
 - `应用说明.txt` → 新功能描述（如功能有增减）
 - `README.md` → 核心特色 / 技术栈 / 关键词（如功能有增减）
+
+说明文档中应持续保留对原项目「合社日历」原作者 **阿裕Addyu** 的致谢与链接：
+https://github.com/scutken/he-calendar
+
+## 单文件分发（牛马日历.exe）
+
+- WinUI + WebView2 **无法**打成真正零依赖的单 PE；对外「一个 exe」靠 `winui/NiuMa.Launcher` 嵌入 `payload.zip`，首次解压到 `%LocalAppData%\HeCalendar\NiuMaApp\`。
+- 更新内嵌包后务必提高 `Program.cs` 中的 `PayloadVersion`，否则用户不会重新解压。
+- 打 zip 前排除 `*.WebView2` / `EBWebView` 等运行时用户数据，避免锁文件导致打包失败。
